@@ -24,9 +24,13 @@ import { createModerationGuardrail } from "@/app/agentConfigs/guardrails";
 
 // Agent configs
 import { taskmasterScenario, taskmasterCompanyName } from "@/app/agentConfigs/taskmaster";
+import { itHelpdeskScenario, itHelpdeskCompanyName } from "@/app/agentConfigs/itHelpdesk";
 
-// Single scenario only
-const sdkScenario: RealtimeAgent[] = taskmasterScenario;
+// Scenario selected via URL param `profile=it` to use the IT Helpdesk agent
+function selectScenario(profile?: string): { scenario: RealtimeAgent[]; companyName: string } {
+  if ((profile || "").toLowerCase() === 'it') return { scenario: itHelpdeskScenario, companyName: itHelpdeskCompanyName };
+  return { scenario: taskmasterScenario, companyName: taskmasterCompanyName };
+}
 
 import useAudioDownload from "./hooks/useAudioDownload";
 import { useHandleSessionHistory } from "./hooks/useHandleSessionHistory";
@@ -45,6 +49,8 @@ function App() {
   // before the offer/answer negotiation.
   // ---------------------------------------------------------------------
   const urlCodec = searchParams.get("codec") || "opus";
+  const profile = (searchParams.get("profile") || undefined) as string | undefined;
+  const { scenario: sdkScenario, companyName } = React.useMemo(() => selectScenario(profile), [profile]);
 
   // Agents SDK doesn't currently support codec selection so it is now forced 
   // via global codecPatch at module load 
@@ -187,7 +193,7 @@ function App() {
       const EPHEMERAL_KEY = await fetchEphemeralKey();
       if (!EPHEMERAL_KEY) return;
 
-      const guardrail = createModerationGuardrail(taskmasterCompanyName);
+      const guardrail = createModerationGuardrail(companyName);
 
       await connect({
         getEphemeralKey: async () => EPHEMERAL_KEY,
@@ -310,6 +316,13 @@ function App() {
     window.location.replace(url.toString());
   };
 
+  const handleProfileChange = (newProfile: string) => {
+    const url = new URL(window.location.toString());
+    if (newProfile) url.searchParams.set("profile", newProfile);
+    else url.searchParams.delete("profile");
+    window.location.replace(url.toString());
+  };
+
   useEffect(() => {
     const storedPushToTalkUI = localStorage.getItem("pushToTalkUI");
     if (storedPushToTalkUI) {
@@ -418,6 +431,18 @@ function App() {
             <span className="uppercase tracking-wide text-gray-600 dark:text-gray-300">
               {sessionStatus}
             </span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-sm text-gray-600 dark:text-gray-300">Profile</span>
+            <select
+              className="border rounded-md px-2 py-1 bg-transparent border-neutral-300 dark:border-neutral-700"
+              value={profile || ""}
+              onChange={(e) => handleProfileChange(e.target.value)}
+              title="Agent profile"
+            >
+              <option value="">Taskmaster</option>
+              <option value="it">IT Helpdesk</option>
+            </select>
           </div>
           <label className="flex items-center gap-2 text-base">
             <input

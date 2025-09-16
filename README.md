@@ -38,3 +38,10 @@ For full documentation, guides, and API references, see the official [OpenAI Age
 - The supervisor passes your hosted MCP server(s) to the Responses API and guides the model to list/call tools.
 - Logs are off by default; enable in Settings.
 - Push‑to‑talk shows a “Talk” hold button; otherwise you get a Mute/Unmute toggle.
+
+## Agent profiles
+
+- Default: Taskmaster project assistant
+- IT Helpdesk: geared for ticket status (HubSpot) and Slack updates
+
+You can switch profiles in the header dropdown, or via URL param `?profile=it`.
