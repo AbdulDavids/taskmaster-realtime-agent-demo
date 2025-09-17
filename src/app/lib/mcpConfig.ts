@@ -24,7 +24,7 @@ export function parseMcpConfigToHostedServers(jsonText: string): HostedMcpServer
   let parsed: McpConfig;
   try {
     parsed = JSON.parse(jsonText);
-  } catch (e) {
+  } catch {
     throw new Error("Invalid JSON for MCP config");
   }
 

@@ -41,7 +41,7 @@ async function fetchResponsesMessage(body: any) {
  */
 async function drainUntilFinal(body: any, response: any, addBreadcrumb?: (t: string, d?: any) => void) {
   let current = response;
-  let approvedIds = new Set<string>();
+  const approvedIds = new Set<string>();
   let mcpCallCount = 0;
   while (true) {
     if (current?.error) return { error: 'Something went wrong.' };
