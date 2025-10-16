@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { parseMcpConfigToHostedServers } from "@/app/lib/mcpConfig";
+import { parseMcpConfig } from "@/app/lib/mcpConfig";
 
 type Props = {
   open: boolean;
@@ -45,9 +45,15 @@ export default function SettingsModal({ open, onClose, isAudioPlaybackEnabled, s
 
   const validate = () => {
     try {
-      const servers = parseMcpConfigToHostedServers(mcpJson);
-      if (!servers.length) throw new Error('No servers found in config');
-      setValidServersPreview(JSON.stringify(servers, null, 2));
+      const { hosted, stdio } = parseMcpConfig(mcpJson);
+      if (hosted.length === 0 && stdio.length === 0) {
+        throw new Error('No servers found in config');
+      }
+      const preview = {
+        hostedServers: hosted.length > 0 ? hosted : undefined,
+        stdioServers: stdio.length > 0 ? stdio : undefined,
+      };
+      setValidServersPreview(JSON.stringify(preview, null, 2));
       setError(null);
     } catch (e: any) {
       setError(e?.message || 'Invalid JSON');
@@ -58,7 +64,7 @@ export default function SettingsModal({ open, onClose, isAudioPlaybackEnabled, s
   const save = () => {
     try {
       // Validate before saving
-      parseMcpConfigToHostedServers(mcpJson);
+      parseMcpConfig(mcpJson);
       window.localStorage.setItem('mcpConfig', mcpJson);
       window.localStorage.setItem('theme', theme);
       window.localStorage.setItem('codec', localCodec);
@@ -138,14 +144,28 @@ export default function SettingsModal({ open, onClose, isAudioPlaybackEnabled, s
           </div>
 
           <div className="md:col-span-2 p-4">
-            <div className="text-sm font-medium mb-2">Remote MCP Configuration</div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Paste your Claude-style MCP JSON. Example includes a single hosted server.</p>
+            <div className="text-sm font-medium mb-2">MCP Configuration</div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Paste your MCP JSON config. Supports both remote (hosted) and stdio (npx) servers.</p>
             <textarea
               value={mcpJson}
               onChange={(e) => setMcpJson(e.target.value)}
               rows={12}
               className="w-full border rounded-md p-2 font-mono text-sm bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-700"
-              placeholder='{"mcpServers": {"GramAcmetodo": {"command": "npx", "args": ["mcp-remote", "https://app.getgram.ai/mcp/ritza-rzx-acmetodo-demo"]}}}'
+              placeholder={`{
+  "mcpServers": {
+    "RemoteServer": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://app.getgram.ai/mcp/your-endpoint", "--header", "Authorization:Bearer token"]
+    },
+    "Slack": {
+      "command": "npx",
+      "args": ["-y", "slack-mcp-server@latest", "--transport", "stdio"],
+      "env": {
+        "SLACK_MCP_XOXP_TOKEN": "xoxp-..."
+      }
+    }
+  }
+}`}
             />
 
             {error && <div className="text-sm text-red-500 mt-2">{error}</div>}

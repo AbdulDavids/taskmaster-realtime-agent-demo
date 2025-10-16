@@ -1,5 +1,5 @@
 import { RealtimeItem, tool } from '@openai/agents/realtime';
-import { getHostedMcpToolsFromLocalStorage } from '@/app/lib/mcpConfig';
+import { getHostedMcpToolsFromLocalStorage, parseMcpConfig } from '@/app/lib/mcpConfig';
 
 export const supervisorAgentInstructions = `You are an expert IT helpdesk supervisor. You can provide direct answers or use tools to read ticket status from HubSpot and post updates to Slack.
 
@@ -9,14 +9,20 @@ export const supervisorAgentInstructions = `You are an expert IT helpdesk superv
 - If the user provides a ticket ID or email, fetch that specific ticket first.
 - If the user provides no details (e.g., "I made a password reset request earlier"), attempt to locate the most likely ticket BEFORE asking questions:
   - Query HubSpot tickets from the last 14 days for keywords like "password reset", "unlock", "login", or "access" and select the most recent.
-  - If Slack read access is available, read the recent messages (e.g., last 50) in #tech-support to look for relevant threads or links.
+  - **ALWAYS check the #tech-support Slack channel** for recent messages (read at least the last 50 messages) to look for relevant discussions, ticket references, or updates.
   - If a strong candidate is found, summarize it and ask for quick confirmation. If there are multiple candidates, present the top 2 succinctly and ask a single disambiguating follow-up (email or approximate date).
 - Do not fabricate results. If a tool is unavailable or fails, explain briefly and suggest a next step.
-- First, discover available tools on the IT Helpdesk MCP server (list tools). Then pick the most appropriate tool and call it.
-- When asked for status, fetch the ticket and summarize: status, assignee/owner, last updated time, and next step.
-- If Slack read access is available, also read recent messages from the #tech-support channel (e.g., last 50) to check for relevant updates (by ticket ID or requester email) and include any useful context in your summary.
-- If asked, post a short update to Slack with the key status in one sentence.
+- When asked for ticket status:
+  1. First, fetch the ticket from HubSpot
+  2. **Then, ALWAYS read recent messages from the #tech-support Slack channel** (at least 50 messages) to check for any updates, discussions, or context about this ticket
+  3. Summarize: status, assignee/owner, last updated time, next step, and any relevant Slack discussions
+- If asked to post an update, post a short message to the #tech-support Slack channel with the key status in one sentence.
 - Tool budget: At most 20 MCP tool calls in a single response.
+
+# Important
+- **The #tech-support channel is the primary communication channel for IT support tickets.**
+- **ALWAYS check #tech-support for context when looking up or discussing tickets.**
+- Use Slack channel tools to read messages, not just to post updates.
 
 # Output
 - Provide a single short message the chat agent can read verbatim.
@@ -103,10 +109,55 @@ export const getNextResponseFromSupervisor = tool({
     const filteredLogs = history.filter((log) => log.type === 'message');
     const addBreadcrumb = (details?.context as any)?.addTranscriptBreadcrumb as undefined | ((t: string, d?: any) => void);
 
+    // Get the raw MCP config
+    const rawMcpConfig = typeof window !== 'undefined' ? window.localStorage.getItem('mcpConfig') : null;
+    if (!rawMcpConfig || !rawMcpConfig.trim()) {
+      return { nextResponse: 'I need your MCP config. Click Settings and paste your mcpServers JSON.' };
+    }
+
+    // Parse to detect stdio vs hosted servers
+    const { stdio, hosted } = parseMcpConfig(rawMcpConfig);
+    if (addBreadcrumb) addBreadcrumb('[itHelpdesk.supervisor] parsed MCP config', { stdioCount: stdio.length, hostedCount: hosted.length });
+
+    // If there are stdio servers, use the new agent-based API
+    if (stdio.length > 0) {
+      try {
+        const response = await fetch('/api/mcp-agent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mcpConfig: rawMcpConfig,
+            instructions: supervisorAgentInstructions,
+            conversationHistory: filteredLogs,
+            userMessage: relevantContextFromLastUserMessage,
+            maxTurns: 20,
+          }),
+        });
+
+        if (!response.ok) {
+          console.warn('mcp-agent error', response.status, response.statusText);
+          const errorData = await response.json().catch(() => ({}));
+          return { error: errorData.error || 'Something went wrong with stdio MCP servers.' };
+        }
+
+        const result = await response.json();
+        if (result.error) {
+          return { error: result.error };
+        }
+
+        if (addBreadcrumb) addBreadcrumb('[itHelpdesk.supervisor] stdio MCP response', { toolsAvailable: result.toolsAvailable });
+        return { nextResponse: result.response };
+      } catch (err: any) {
+        console.error('stdio MCP error', err);
+        return { error: 'Failed to execute stdio MCP agent.' };
+      }
+    }
+
+    // Fall back to hosted servers via Responses API
     const mcpTools = await getHostedMcpToolsFromLocalStorage();
-    if (addBreadcrumb) addBreadcrumb('[itHelpdesk.supervisor] configured MCP tools', mcpTools);
+    if (addBreadcrumb) addBreadcrumb('[itHelpdesk.supervisor] configured hosted MCP tools', mcpTools);
     if (!mcpTools.length) {
-      return { nextResponse: 'I need your Remote MCP JSON (IT Helpdesk). Click Settings and paste your mcpServers JSON.' };
+      return { nextResponse: 'No hosted MCP servers found. Please check your config.' };
     }
 
     const body: any = {

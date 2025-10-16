@@ -16,11 +16,37 @@ export type HostedMcpServer = {
   headers?: Record<string, string>;
 };
 
+export type StdioMcpServer = {
+  label: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+export type ParsedMcpServers = {
+  hosted: HostedMcpServer[];
+  stdio: StdioMcpServer[];
+};
+
 function substituteEnv(value: string, env: Record<string, string> = {}) {
   return value.replace(/\$\{([^}]+)\}/g, (_m, v) => (env[v] ?? ""));
 }
 
-export function parseMcpConfigToHostedServers(jsonText: string): HostedMcpServer[] {
+function isStdioServer(cfg: McpServerConfig): boolean {
+  const args = cfg.args || [];
+  // Check if this is a remote server (has mcp-remote with URL)
+  if (args.includes("mcp-remote")) {
+    return false;
+  }
+  // Check if any arg looks like a URL
+  if (args.some((a) => /^https?:\/\//.test(a))) {
+    return false;
+  }
+  // Otherwise, it's a stdio server (e.g., npx with package name, or --transport stdio)
+  return true;
+}
+
+export function parseMcpConfig(jsonText: string): ParsedMcpServers {
   let parsed: McpConfig;
   try {
     parsed = JSON.parse(jsonText);
@@ -28,41 +54,61 @@ export function parseMcpConfigToHostedServers(jsonText: string): HostedMcpServer
     throw new Error("Invalid JSON for MCP config");
   }
 
-  const servers: HostedMcpServer[] = [];
+  const hosted: HostedMcpServer[] = [];
+  const stdio: StdioMcpServer[] = [];
   const entries = Object.entries(parsed.mcpServers || {});
+
   for (const [label, cfg] of entries) {
     const args = cfg.args || [];
     const env = cfg.env || {};
-    let url = "";
-    const headers: Record<string, string> = {};
 
-    // Find URL
-    if (args.length >= 2 && args[0] === "mcp-remote" && /^https?:\/\//.test(args[1])) {
-      url = substituteEnv(args[1], env);
+    if (isStdioServer(cfg)) {
+      // Stdio server (e.g., npx slack-mcp-server, etc.)
+      if (!cfg.command) continue;
+      stdio.push({
+        label,
+        command: cfg.command,
+        args: args.map((a) => substituteEnv(a, env)),
+        env,
+      });
     } else {
-      const maybeUrl = args.find((a) => /^https?:\/\//.test(a));
-      if (maybeUrl) url = substituteEnv(maybeUrl, env);
-    }
+      // Remote/hosted server
+      let url = "";
+      const headers: Record<string, string> = {};
 
-    // Parse --header Key:Value entries
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] === "--header") {
-        const kv = args[i + 1] || "";
-        const expanded = substituteEnv(kv, env);
-        const splitIdx = expanded.indexOf(":");
-        if (splitIdx > 0) {
-          const k = expanded.slice(0, splitIdx).trim();
-          const v = expanded.slice(splitIdx + 1).trim();
-          if (k) headers[k] = v;
-        }
-        i++;
+      // Find URL
+      if (args.length >= 2 && args[0] === "mcp-remote" && /^https?:\/\//.test(args[1])) {
+        url = substituteEnv(args[1], env);
+      } else {
+        const maybeUrl = args.find((a) => /^https?:\/\//.test(a));
+        if (maybeUrl) url = substituteEnv(maybeUrl, env);
       }
-    }
 
-    if (url) servers.push({ label, url, headers: Object.keys(headers).length ? headers : undefined });
+      // Parse --header Key:Value entries
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === "--header") {
+          const kv = args[i + 1] || "";
+          const expanded = substituteEnv(kv, env);
+          const splitIdx = expanded.indexOf(":");
+          if (splitIdx > 0) {
+            const k = expanded.slice(0, splitIdx).trim();
+            const v = expanded.slice(splitIdx + 1).trim();
+            if (k) headers[k] = v;
+          }
+          i++;
+        }
+      }
+
+      if (url) hosted.push({ label, url, headers: Object.keys(headers).length ? headers : undefined });
+    }
   }
 
-  return servers;
+  return { hosted, stdio };
+}
+
+// Legacy function for backward compatibility
+export function parseMcpConfigToHostedServers(jsonText: string): HostedMcpServer[] {
+  return parseMcpConfig(jsonText).hosted;
 }
 
 export async function getHostedMcpToolsFromLocalStorage(): Promise<any[]> {
