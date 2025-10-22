@@ -34,11 +34,12 @@ function substituteEnv(value: string, env: Record<string, string> = {}) {
 
 function isStdioServer(cfg: McpServerConfig): boolean {
   const args = cfg.args || [];
-  // Check if this is a remote server (has mcp-remote with URL)
+  // mcp-remote is a stdio client that connects to remote servers
+  // It should be treated as a stdio server, not hosted
   if (args.includes("mcp-remote")) {
-    return false;
+    return true;
   }
-  // Check if any arg looks like a URL
+  // Check if any arg looks like a URL (without mcp-remote)
   if (args.some((a) => /^https?:\/\//.test(a))) {
     return false;
   }
